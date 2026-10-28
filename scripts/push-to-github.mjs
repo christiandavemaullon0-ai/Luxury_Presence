@@ -1,11 +1,10 @@
 /**
- * Safely clone and publish this assessment project to its GitHub repository.
- *
- * Run: npm run github:push
- * Requires: Git, an authenticated GitHub account with write access.
- * It never deletes or overwrites existing repository files.
+ * Publish project source to the user's Luxury_Presence repository safely.
+ * Supports both the initial commit and later fixes; does not force-push,
+ * delete unrelated files, or touch a working Git checkout.
  */
-import { cpSync, existsSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -13,72 +12,50 @@ import { spawnSync } from 'node:child_process';
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoUrl = process.env.GITHUB_REPO_URL ||
   'https://github.com/christiandavemaullon0-ai/Luxury_Presence.git';
-const target = path.resolve(project, '..', 'Luxury_Presence_github');
-const commitMessage = 'feat: add responsive Marci Metzger homepage redesign';
+const workspace = mkdtempSync(path.join(tmpdir(), 'luxury-presence-upload-'));
+const target = path.join(workspace, 'repo');
+const commitMessage = 'fix: repair anchor navigation, mobile menu and photo gallery';
 
-function run(command, args, cwd = project) {
-  const result = spawnSync(command, args, { cwd, stdio: 'inherit', shell: false });
+function run(command, args, cwd = project, capture = false) {
+  const result = spawnSync(command, args, { cwd, stdio: capture ? 'pipe' : 'inherit',
+    encoding: capture ? 'utf8' : undefined, shell: false });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
-}
-
-function output(command, args, cwd = project) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8', shell: false });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(result.stderr.trim());
-  return result.stdout.trim();
+  if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed (code ${result.status})${capture ? ': '+result.stderr : ''}`);
+  return capture ? result.stdout.trim() : '';
 }
 
 try {
-  if (existsSync(target)) {
-    throw new Error(`Folder already exists: ${target}\nRename/move it before retrying; no existing files were changed.`);
-  }
-  console.log(`Cloning ${repoUrl} ...`);
+  console.log(`Cloning ${repoUrl} into a temporary directory...`);
   run('git', ['clone', repoUrl, target]);
+  const paths = ['index.html', 'package.json', 'vercel.json', '.gitignore',
+    'IMPLEMENTATION_NOTE.md', 'original-image-manifest.json', 'src', 'public', 'scripts'];
+  if (existsSync(path.join(project, 'package-lock.json'))) paths.push('package-lock.json');
 
-  const sources = [
-    'index.html', 'package.json', 'vercel.json', '.gitignore',
-    'README.md', 'IMPLEMENTATION_NOTE.md', 'original-image-manifest.json',
-    'src', 'public', 'scripts',
-  ];
-  if (existsSync(path.join(project, 'package-lock.json'))) sources.push('package-lock.json');
-
-  // Preserve the repo's existing README (GitHub commonly creates one initially).
-  const destinationName = (name) =>
-    name === 'README.md' && existsSync(path.join(target, 'README.md'))
-      ? 'HOMEPAGE_README.md' : name;
-  const filePlan = sources.map((name) => ({ name, destination: destinationName(name) }));
-  const collisions = filePlan
-    .filter(({ destination }) => existsSync(path.join(target, destination)))
-    .map(({ name }) => name);
-  if (collisions.length) {
-    throw new Error(
-      `Repository contains conflicting paths: ${collisions.join(', ')}.\n` +
-      `No files were overwritten. Review the clone at ${target} before proceeding.`
-    );
+  // Preserve the repository's general README and put website documentation
+  // under a separate name, consistent with the initial upload script.
+  const siteReadme = path.join(project, 'README.md');
+  if (existsSync(siteReadme)) {
+    cpSync(siteReadme, path.join(target, 'HOMEPAGE_README.md'), {force:true});
+    paths.push('HOMEPAGE_README.md');
   }
-  console.log('Copying website files (preserving existing repository files) ...');
-  for (const { name, destination } of filePlan) {
-    const from = path.join(project, name);
-    if (!existsSync(from)) continue;
-    const into = path.join(target, destination);
-    cpSync(from, into, { recursive: true, force: false, errorOnExist: true });
+  for (const name of paths) {
+    if (name === 'HOMEPAGE_README.md') continue;
+    const source = path.join(project, name);
+    if (existsSync(source)) cpSync(source, path.join(target, name), {recursive:true, force:true});
   }
-
-  console.log('\nFiles staged for commit:');
-  run('git', ['add', '--', ...filePlan.map(({ destination }) => destination).filter((name) => existsSync(path.join(target, name)))], target);
-  run('git', ['status', '--short'], target);
-  if (!output('git', ['diff', '--cached', '--name-only'], target)) {
-    console.log('No changes detected. Nothing to push.');
+  run('git', ['add', '--', ...paths], target);
+  console.log('\nChanges ready to push:');
+  run('git', ['diff', '--cached', '--stat'], target);
+  if (!run('git', ['diff', '--cached', '--name-only'], target, true)) {
+    console.log('No changes to push; repository is up-to-date.');
     process.exit(0);
   }
   run('git', ['commit', '-m', commitMessage], target);
-  console.log('\nPublishing to GitHub ...');
-  run('git', ['push', '-u', 'origin', 'HEAD'], target);
-  console.log(`\nSUCCESS. Website source pushed to ${repoUrl.replace(/\.git$/, '')}`);
-  console.log(`Local Git clone: ${target}`);
+  run('git', ['push', 'origin', 'HEAD'], target);
+  console.log(`\nSUCCESS: pushed fixes to ${repoUrl.replace(/\.git$/, '')}`);
 } catch (error) {
-  console.error(`\nUpload stopped: ${error.message}`);
-  console.error('Nothing was force-pushed; existing GitHub files were not overwritten.');
+  console.error(`\nPush stopped: ${error.message}`);
+  console.error('No force-push was attempted; review the error before retrying.');
+  console.error(`Temporary checkout: ${target}`);
   process.exitCode = 1;
 }

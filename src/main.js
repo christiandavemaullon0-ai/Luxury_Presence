@@ -2,23 +2,80 @@
 const menuToggle = document.querySelector('#menuToggle');
 const mobileMenu = document.querySelector('#mobileMenu');
 
-function closeMenu() {
+// Responsive navigation: keep the document scrollable so opening the
+// menu cannot unexpectedly move the page on a mobile browser.
+function closeMenu({ restoreFocus = false } = {}) {
+  const wasOpen = menuToggle.getAttribute('aria-expanded') === 'true';
   menuToggle.setAttribute('aria-expanded', 'false');
   menuToggle.setAttribute('aria-label', 'Open menu');
   mobileMenu.hidden = true;
-  document.body.classList.remove('menu-open');
+  document.querySelector('.site-header').classList.remove('menu-active');
+  if (restoreFocus && wasOpen) menuToggle.focus();
 }
 
 menuToggle.addEventListener('click', () => {
-  const expanded = menuToggle.getAttribute('aria-expanded') === 'true';
-  menuToggle.setAttribute('aria-expanded', String(!expanded));
-  menuToggle.setAttribute('aria-label', expanded ? 'Open menu' : 'Close menu');
-  mobileMenu.hidden = expanded;
-  document.body.classList.toggle('menu-open', !expanded);
+  const shouldOpen = menuToggle.getAttribute('aria-expanded') !== 'true';
+  menuToggle.setAttribute('aria-expanded', String(shouldOpen));
+  menuToggle.setAttribute('aria-label', shouldOpen ? 'Close menu' : 'Open menu');
+  mobileMenu.hidden = !shouldOpen;
+  document.querySelector('.site-header').classList.toggle('menu-active', shouldOpen);
 });
-mobileMenu.querySelectorAll('a').forEach(link => link.addEventListener('click', closeMenu));
-document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenu(); });
-window.addEventListener('resize', () => { if (window.innerWidth > 980) closeMenu(); });
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeMenu({ restoreFocus: true });
+});
+document.addEventListener('pointerdown', event => {
+  if (!mobileMenu.hidden && !event.target.closest('.site-header')) closeMenu();
+});
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 980) closeMenu();
+});
+
+// Scroll to the section's first visible heading/eyebrow — not its padded
+// outer edge. The sticky header height is measured at click time so the
+// destination stays visible on desktop, tablet and phone screens.
+function scrollToSection(hash, { updateHistory = false, smooth = true } = {}) {
+  const id = decodeURIComponent(hash.slice(1));
+  const section = document.getElementById(id);
+  if (!section) return false;
+
+  closeMenu();
+  const isPageTop = id === 'home' || id === 'top' || id === 'main';
+  const marker = section.querySelector('.eyebrow') || section;
+  const headerHeight = document.querySelector('.site-header').getBoundingClientRect().height;
+  const destination = isPageTop ? 0 : Math.max(0,
+    window.scrollY + marker.getBoundingClientRect().top - headerHeight - 20
+  );
+
+  if (updateHistory && window.location.hash !== hash) {
+    window.history.pushState(null, '', hash);
+  }
+  window.scrollTo({
+    top: destination,
+    behavior: smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'smooth' : 'instant',
+  });
+  return true;
+}
+
+document.querySelectorAll('a[href^="#"]').forEach(link => {
+  const hash = link.getAttribute('href');
+  if (!hash || hash.length < 2 || !document.getElementById(hash.slice(1))) return;
+  link.addEventListener('click', event => {
+    // Preserve native skip-link keyboard behavior.
+    if (hash === '#main') return;
+    event.preventDefault();
+    scrollToSection(hash, { updateHistory: true });
+  });
+});
+
+window.addEventListener('popstate', () => {
+  if (window.location.hash) scrollToSection(window.location.hash, { smooth: false });
+  else scrollToSection('#home', { smooth: false });
+});
+window.addEventListener('load', () => {
+  if (window.location.hash) scrollToSection(window.location.hash, { smooth: false });
+});
 
 const navLinks = [...document.querySelectorAll('.desktop-nav a')];
 const trackedSections = navLinks.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
