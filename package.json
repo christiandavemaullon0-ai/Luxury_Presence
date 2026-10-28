@@ -1,0 +1,16 @@
+{
+  "name": "marci-metzger-homepage-redesign",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Responsive one-page real estate homepage redesign for a Junior Website Builder assessment",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "assets:download": "node scripts/download-original-images.mjs",
+    "github:push": "node scripts/push-to-github.mjs"
+  },
+  "devDependencies": {
+    "vite": "^7.1.0"
+  }
+}
